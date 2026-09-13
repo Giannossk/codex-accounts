@@ -37,7 +37,7 @@ def log(value):
     with open(os.environ["TEST_CODEX_LOG"], "a") as handle:
         handle.write(json.dumps(value) + "\n")
 log(event)
-credential = home / "fake-keyring-record"
+credential = home / "auth.json"
 if args == ["app-server"]:
     for line in sys.stdin:
         request = json.loads(line)
@@ -98,7 +98,7 @@ class AccountsTests(unittest.TestCase):
         self.registry = self.root / "manager"
         self.original = self.root / "original"
         self.original.mkdir()
-        (self.original / "fake-keyring-record").write_text(
+        (self.original / "auth.json").write_text(
             json.dumps({"email": "original@example.com", "planType": "plus"})
         )
         self.log = self.root / "events.jsonl"
@@ -264,7 +264,7 @@ class AccountsTests(unittest.TestCase):
         self.add()
         self.add("bob@example.com")
         sessions = self.original / "sessions"
-        sessions.mkdir()
+        sessions.mkdir(exist_ok=True)
         (sessions / "old-session.jsonl").write_text("original history\n")
         for email in ("alice@example.com", "bob@example.com"):
             self.invoke("select", "account", email)
@@ -273,7 +273,7 @@ class AccountsTests(unittest.TestCase):
             self.assertEqual(event["home"], str(account_home))
             self.assertEqual(event["sqlite_home"], str(self.original))
             self.assertEqual(
-                json.loads((account_home / "fake-keyring-record").read_text())["email"],
+                json.loads((account_home / "auth.json").read_text())["email"],
                 email,
             )
             self.assertEqual(
@@ -286,9 +286,42 @@ class AccountsTests(unittest.TestCase):
         ]
         self.assertEqual(metadata_calls[-1]["sqlite_home"], str(self.original))
         self.assertEqual(
-            json.loads((self.original / "fake-keyring-record").read_text())["email"],
+            json.loads((self.original / "auth.json").read_text())["email"],
             "original@example.com",
         )
+
+    def test_new_logins_already_have_shared_skills_and_settings(self):
+        skills = self.original / "skills" / "custom"
+        skills.mkdir(parents=True)
+        (skills / "SKILL.md").write_text("existing custom skill")
+        (self.original / "config.toml").write_text('model="shared"\n')
+        self.add()
+        self.add("bob@example.com")
+        for record in self.state()["accounts"].values():
+            home = Path(record["home"])
+            self.assertTrue(
+                (home / "config.toml").samefile(self.original / "config.toml")
+            )
+            self.assertEqual(
+                (home / "skills/custom/SKILL.md").read_text(), "existing custom skill"
+            )
+            self.assertEqual(
+                json.loads((home / "auth.json").read_text())["email"], record["email"]
+            )
+
+    def test_share_data_migrates_without_launching_codex_or_changing_selection(self):
+        self.add()
+        self.add("bob@example.com")
+        self.invoke("select", "account", "alice@example.com")
+        first = Path(self.record("alice@example.com")[1]["home"])
+        second = Path(self.record("bob@example.com")[1]["home"])
+        (second / "AGENTS.md").write_text("recovered instructions")
+        before, events = self.state(), self.events()
+        result = self.invoke("share", "data")
+        self.assertIn("Credentials remain separate", result.stdout)
+        self.assertEqual(self.events(), events)
+        self.assertEqual(self.state(), before)
+        self.assertEqual((first / "AGENTS.md").read_text(), "recovered instructions")
 
     def test_duplicate_emails_are_separate_and_require_picker(self):
         self.add()
@@ -331,13 +364,13 @@ class AccountsTests(unittest.TestCase):
         self.assertIsNone(record["email"])
 
     def test_existing_home_discovers_email_without_copy_or_login(self):
-        before = (self.original / "fake-keyring-record").read_bytes()
+        before = (self.original / "auth.json").read_bytes()
         self.invoke("add", "account", "--home", str(self.original))
         self.assertEqual(
             self.record("original@example.com")[1]["home"], str(self.original)
         )
         self.assertNotIn(["login"], [event.get("args") for event in self.events()])
-        self.assertEqual((self.original / "fake-keyring-record").read_bytes(), before)
+        self.assertEqual((self.original / "auth.json").read_bytes(), before)
         self.invoke("add", "account", "--home", str(self.original), code=2)
 
     def test_v1_migration_discards_labels_and_keeps_home_and_selection(self):
@@ -365,7 +398,7 @@ class AccountsTests(unittest.TestCase):
         home = Path(self.record("alice@example.com")[1]["home"])
         self.invoke("remove", "account", "alice@example.com")
         self.assertEqual(self.state(), {"version": 2, "selected": None, "accounts": {}})
-        self.assertTrue((home / "fake-keyring-record").exists())
+        self.assertTrue((home / "auth.json").exists())
         self.assertNotIn(["logout"], [event.get("args") for event in self.events()])
 
     def test_current_email_and_reauthentication_refresh_identity(self):

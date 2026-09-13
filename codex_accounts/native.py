@@ -9,7 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .history import configured_history, prepare_history
+from .history import configured_history
+from .shared import prepare_home
 from .state import AccountError, Store, default_root, safe_text, valid_email
 
 
@@ -151,7 +152,7 @@ async def read_identity(binary: str, home: Path, *, timeout: float = 12) -> dict
 
 def launch(home: Path, arguments: list[str]) -> int:
     binary = codex_binary()
-    shared_history = prepare_history(Store(default_root()), home)
+    shared_history = prepare_home(Store(default_root()), home)
     env = account_environment(home)
     env["CODEX_SQLITE_HOME"] = str(shared_history)
     sys.stdout.flush()

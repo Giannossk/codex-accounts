@@ -2,7 +2,8 @@
 
 A complete terminal account selector for the official Codex CLI. Sign into each
 account once, list the discovered email addresses, and manually choose which
-account Codex uses.
+account Codex uses. Skills, plugins, settings, instructions, and history are
+shared across accounts; each login keeps its own credentials.
 
 ## Everyday commands
 
@@ -58,6 +59,7 @@ session after selecting a different account; logging out is unnecessary.
 | `codex list accounts --json` | Read structured account metadata, including IDs and home paths. |
 | `codex remove account` | Pick an account to remove from the list. |
 | `codex remove account alice@example.com` | Remove an email directly. |
+| `codex share data` | Migrate and share existing local data across every saved account now. |
 
 Multiple saved logins can have the same email, including accounts with different
 workspace contexts. They remain separate; use the numbered picker when an email
@@ -225,10 +227,12 @@ uv tool uninstall codex-accounts
 The official Codex CLI is a separate installation and must be updated or
 removed separately.
 
-## Account isolation and metadata
+## Shared data and separate credentials
 
-Each saved login has a stable, separate `CODEX_HOME` for credentials, settings,
-and skills. All accounts share the existing history store at `~/.codex`.
+Each saved login has a stable, separate `CODEX_HOME` for credentials. All accounts
+share the existing data at `~/.codex`: settings (`config.toml`), skills, plugins,
+instructions (`AGENTS.md`), rules, prompts, agents, automations, memories, caches,
+and history. Switching accounts changes the login while keeping your setup.
 Selecting an account chooses the login used for both new and resumed chats:
 
 ```sh
@@ -239,10 +243,44 @@ codex resume SESSION_ID
 
 No environment override is required. The wrapper sets `CODEX_SQLITE_HOME` to the
 shared store and links each account's session directories, history indexes, and
-thread writer locks to it. The existing `~/.codex` store stays in place. Its
+thread writer locks to it, along with its other persistent files and directories.
+The existing `~/.codex` store stays in place. Its
 credentials are used only when that login is explicitly selected.
 
-On the first launch, account-specific history joins that store. Original files
+Sharing is prepared when adding a new login, selecting an account, or launching
+Codex. To apply it to all existing accounts immediately, without starting a chat:
+
+```sh
+codex share data
+```
+
+Existing custom skills and plugins from all registered homes are combined.
+Existing shared files take precedence when the same path has different content.
+Missing configuration keys, project settings, profiles, and skill entries are
+merged into the shared configuration; its existing values take precedence.
+Configuration is rewritten only when missing settings must be imported; its
+original formatting and comments are kept in the backup.
+
+Original account files are retained under
+`<account-home>/.shared-backups/<migration-id>/account/`. Shared configuration
+files changed by the merge are backed up alongside them under `shared/`.
+The migration prints each backup location. No credential files are copied.
+Directory links make later skill installations and edits visible to all
+accounts immediately. Additional top-level files introduced by Codex are
+discovered on subsequent launches or with `codex share data`. If an external
+editor replaces a file link, the next preparation repairs it, keeping the
+newer file and retaining the other copy in the backup.
+
+Credential files (`auth.json`, `.credentials.json`), the `secrets` directory,
+credential backups, and OS keyring entries remain specific to each login.
+Temporary process files, locks, and recovery copies also stay local; old SQLite
+files are retained for recovery while live databases use `CODEX_SQLITE_HOME`.
+Sharing local plugin files does not transfer a remote account's authorizations.
+Restart existing Codex sessions to reload the shared skills and configuration.
+Codex's [official credential storage documentation](https://learn.chatgpt.com/docs/auth#credential-storage)
+describes its file and keyring backends.
+
+Account-specific history also joins the shared store. Original history files
 are retained in `.history-backups` inside the account home; original account
 databases remain in place. Shared databases modified by an import are backed up
 under the account manager's `history-backups` directory using SQLite's backup
@@ -258,7 +296,8 @@ migration do not require other chats to close. The original account databases
 and file backups are retained for recovery and should not be used for parallel
 sessions after migration.
 
-The shared location is recorded in `history.json` beside the account registry.
+The shared location is recorded in `history.json` beside the account registry
+and is reused for settings and skills as well.
 For a custom location, set `CODEX_ACCOUNTS_HISTORY_HOME` before the first launch;
 later launches keep the recorded location. Symbolic links are required; Windows
 users must enable Developer Mode or run with permission to create them.

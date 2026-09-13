@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .native import account_environment, codex_binary, read_identity
 from .picker import pick
+from .shared import prepare_home
 from .state import AccountError, Store, file_lock, private_directory
 
 
@@ -99,6 +100,7 @@ def add_account(
             private_directory(homes)
             home = homes / account_id
             home.mkdir(mode=0o700)
+            prepare_home(store, home)
             print("Sign into the account you want to add.", flush=True)
             arguments = [binary, "login"]
             if device_auth:
@@ -140,6 +142,8 @@ def add_account(
                     "That saved login was already added by another terminal."
                 )
             current["accounts"][account_id] = {"home": str(home), **identity}
+        if existing_home:
+            prepare_home(store, home)
         if identity["email"]:
             print(f"Added {identity['email']}.")
         else:
@@ -206,6 +210,7 @@ def select_account(store: Store, selector: str | None = None) -> str | None:
     key = choose(store, selector)
     if key is None:
         return None
+    prepare_home(store, store.home(key))
     with store.edit() as state:
         store.home(key, state)
         state["selected"] = key

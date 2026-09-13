@@ -7,6 +7,7 @@ import sys
 
 from .manager import add_account, list_accounts, refresh, remove_account, select_account
 from .native import account_environment, codex_binary, launch
+from .shared import prepare_home
 from .state import AccountError, Store, default_root
 
 ACCOUNT_HELP = """
@@ -18,6 +19,7 @@ Account commands:
   codex select account --run       Choose an account and start Codex
   codex current account            Show the selected email
   codex remove account             Remove an account from the list
+  codex share data                 Share settings, skills, plugins, and history now
   codex --account EMAIL [ARGS]     Use an email for this launch only
 """
 
@@ -57,6 +59,10 @@ def parser() -> argparse.ArgumentParser:
     remove = commands.add_parser("remove", help="Remove an account from the saved list")
     remove.add_argument("subject", choices=["account"])
     remove.add_argument("email", nargs="?")
+    sharing = commands.add_parser(
+        "share", help="Share local Codex data across all accounts"
+    )
+    sharing.add_argument("subject", choices=["data"])
     shell = commands.add_parser("shell-init", help="Print shell integration")
     shell.add_argument("shell", choices=["bash", "zsh"])
     return root
@@ -76,6 +82,11 @@ def manage(store: Store, arguments: list[str]) -> int:
         return launch(store.home(key), []) if args.run else 0
     if args.command == "remove":
         return remove_account(store, args.email)
+    if args.command == "share":
+        print(
+            f"All accounts share Codex data at {prepare_home(store)}. Credentials remain separate."
+        )
+        return 0
     if args.command == "current":
         state = refresh(store)
         record = state["accounts"].get(state["selected"])
@@ -104,6 +115,7 @@ def run(arguments: list[str]) -> int:
         "select",
         "current",
         "remove",
+        "share",
         "shell-init",
     ):
         return manage(store, arguments)
@@ -143,6 +155,7 @@ def run(arguments: list[str]) -> int:
             return 130
     home = store.home(key)
     if arguments and arguments[0] in ("login", "logout"):
+        prepare_home(store, home)
         result = subprocess.run(
             [codex_binary(), *arguments], env=account_environment(home), check=False
         )

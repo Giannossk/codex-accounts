@@ -368,12 +368,13 @@ def _join(account_home: Path, target: Path, store: Store) -> None:
         _write_json(account_home / MARKER, str(target))
 
 
-def prepare_history(store: Store, account_home: Path) -> Path:
+def prepare_history(store: Store, account_home: Path | None = None) -> Path:
     private_directory(store.root)
     with file_lock(store.root / "history.lock"):
         target = history_home(store)
         candidates = {Path(row["home"]) for row in store.read()["accounts"].values()}
-        candidates.add(account_home)
+        if account_home is not None:
+            candidates.add(account_home)
         for candidate in sorted(candidates):
             if not candidate.is_dir():
                 continue

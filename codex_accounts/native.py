@@ -9,7 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .state import AccountError, safe_text, valid_email
+from .history import configured_history, prepare_history
+from .state import AccountError, Store, default_root, safe_text, valid_email
 
 
 def codex_binary() -> str:
@@ -37,6 +38,8 @@ def codex_binary() -> str:
 def account_environment(home: Path) -> dict[str, str]:
     env = dict(os.environ)
     env["CODEX_HOME"] = str(home)
+    if shared_history := configured_history(home):
+        env["CODEX_SQLITE_HOME"] = str(shared_history)
     for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
         env.pop(name, None)
     return env
@@ -148,7 +151,9 @@ async def read_identity(binary: str, home: Path, *, timeout: float = 12) -> dict
 
 def launch(home: Path, arguments: list[str]) -> int:
     binary = codex_binary()
+    shared_history = prepare_history(Store(default_root()), home)
     env = account_environment(home)
+    env["CODEX_SQLITE_HOME"] = str(shared_history)
     sys.stdout.flush()
     sys.stderr.flush()
     if os.name == "posix":

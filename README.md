@@ -227,9 +227,41 @@ removed separately.
 
 ## Account isolation and metadata
 
-Each saved login has a stable, separate `CODEX_HOME`. Credentials, settings,
-skills, and session history belong to that home. Working-directory project files
-remain available as usual. `codex resume` shows sessions for the selected account.
+Each saved login has a stable, separate `CODEX_HOME` for credentials, settings,
+and skills. All accounts share the existing history store at `~/.codex`.
+Selecting an account chooses the login used for both new and resumed chats:
+
+```sh
+codex select account alice@example.com
+codex resume
+codex resume SESSION_ID
+```
+
+No environment override is required. The wrapper sets `CODEX_SQLITE_HOME` to the
+shared store and links each account's session directories, history indexes, and
+thread writer locks to it. The existing `~/.codex` store stays in place. Its
+credentials are used only when that login is explicitly selected.
+
+On the first launch, account-specific history joins that store. Original files
+are retained in `.history-backups` inside the account home; original account
+databases remain in place. Shared databases modified by an import are backed up
+under the account manager's `history-backups` directory using SQLite's backup
+API, including committed WAL data. Existing shared threads take precedence.
+Threads, paginated history, goals, queued messages, and thread memory records
+are imported; account-specific enrollments and old logs stay in their original
+stores. Future SQLite data, including logs, goals, and memories, is shared.
+
+Finish and exit running chats before the first launch with this version. A busy
+account's migration is deferred until its chats close; launching that account
+before migration is complete reports an actionable error. Normal launches after
+migration do not require other chats to close. The original account databases
+and file backups are retained for recovery and should not be used for parallel
+sessions after migration.
+
+The shared location is recorded in `history.json` beside the account registry.
+For a custom location, set `CODEX_ACCOUNTS_HISTORY_HOME` before the first launch;
+later launches keep the recorded location. Symbolic links are required; Windows
+users must enable Developer Mode or run with permission to create them.
 
 The manager does not import the original default login automatically. If no
 account is selected, an interactive Codex launch opens the picker; scripts must

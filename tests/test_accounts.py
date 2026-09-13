@@ -29,6 +29,7 @@ args = sys.argv[1:]
 home = Path(os.environ["CODEX_HOME"])
 event = {
     "args": args, "home": str(home), "cwd": os.getcwd(), "pid": os.getpid(),
+    "sqlite_home": os.environ.get("CODEX_SQLITE_HOME"),
     "auth_overrides": [name for name in
         ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN") if name in os.environ],
 }
@@ -108,6 +109,7 @@ class AccountsTests(unittest.TestCase):
             **os.environ,
             "PYTHONPATH": str(SOURCE),
             "CODEX_ACCOUNTS_HOME": str(self.registry),
+            "CODEX_ACCOUNTS_HISTORY_HOME": str(self.original),
             "CODEX_ACCOUNTS_CODEX_BIN": str(self.binary),
             "CODEX_HOME": str(self.original),
             "TEST_CODEX_LOG": str(self.log),
@@ -257,6 +259,36 @@ class AccountsTests(unittest.TestCase):
         result = self.invoke("select", "account", "alice@example.com", "--run")
         event = json.loads(result.stdout.splitlines()[-1])
         self.assertEqual(event["home"], self.record("alice@example.com")[1]["home"])
+
+    def test_accounts_keep_logins_and_share_existing_history(self):
+        self.add()
+        self.add("bob@example.com")
+        sessions = self.original / "sessions"
+        sessions.mkdir()
+        (sessions / "old-session.jsonl").write_text("original history\n")
+        for email in ("alice@example.com", "bob@example.com"):
+            self.invoke("select", "account", email)
+            event = json.loads(self.invoke("resume", "old-session").stdout)
+            account_home = Path(self.record(email)[1]["home"])
+            self.assertEqual(event["home"], str(account_home))
+            self.assertEqual(event["sqlite_home"], str(self.original))
+            self.assertEqual(
+                json.loads((account_home / "fake-keyring-record").read_text())["email"],
+                email,
+            )
+            self.assertEqual(
+                (account_home / "sessions" / "old-session.jsonl").read_text(),
+                "original history\n",
+            )
+        self.invoke("list", "accounts", "--refresh")
+        metadata_calls = [
+            event for event in self.events() if event.get("args") == ["app-server"]
+        ]
+        self.assertEqual(metadata_calls[-1]["sqlite_home"], str(self.original))
+        self.assertEqual(
+            json.loads((self.original / "fake-keyring-record").read_text())["email"],
+            "original@example.com",
+        )
 
     def test_duplicate_emails_are_separate_and_require_picker(self):
         self.add()

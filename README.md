@@ -284,8 +284,8 @@ errors. Real PTY tests cover arrow keys, cancellation, and terminal restoration.
 The native metadata protocol is also smoke-tested with the installed Codex CLI.
 
 The tests never sign into real accounts. Browser sign-in remains an interactive
-action for the account owner. POSIX is tested; Windows uses a numbered picker and
-needs validation on Windows.
+action for the account owner. Native PTY integration tests run on POSIX, while
+portable account-state, parser, and numbered-picker tests run on every platform.
 
 GitHub Actions runs the test, parser, lint, formatting, and wheel checks on
 Ubuntu, macOS, and Windows.

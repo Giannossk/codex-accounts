@@ -287,6 +287,9 @@ The tests never sign into real accounts. Browser sign-in remains an interactive
 action for the account owner. POSIX is tested; Windows uses a numbered picker and
 needs validation on Windows.
 
+GitHub Actions runs the test, parser, lint, formatting, and wheel checks on
+Ubuntu, macOS, and Windows.
+
 Verified with Codex CLI `0.154.0` and upstream source commit
 `1715e55076737158ba61d43158ede504de6d4ce1`.
 

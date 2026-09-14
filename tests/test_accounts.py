@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from codex_accounts.native import read_identity
+from codex_accounts.native import read_identity, read_rate_limits
 from codex_accounts.state import AccountError
 
 SOURCE = Path(__file__).resolve().parents[1]
@@ -56,6 +56,20 @@ if args == ["app-server"]:
                 account["accessToken"] = "secret-token-do-not-print"
             print(json.dumps({"method": "account/updated", "params": {}}), flush=True)
             print(json.dumps({"id": request["id"], "result": {"account": account, "requiresOpenaiAuth": True}}), flush=True)
+        elif request["method"] == "account/rateLimits/read":
+            if os.environ.get("TEST_QUOTA_HANG"):
+                time.sleep(30)
+            if (home / "quota-error").exists():
+                print(json.dumps({"id": request["id"], "error": {"message": "secret-token-do-not-print"}}), flush=True)
+                continue
+            quota = home / "quota.json"
+            result = json.loads(quota.read_text()) if quota.exists() else {"rateLimits": {
+                "limitId": "codex",
+                "primary": {"usedPercent": 25, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 58, "windowDurationMins": 10080},
+            }}
+            print(json.dumps({"method": "account/rateLimits/updated", "params": {}}), flush=True)
+            print(json.dumps({"id": request["id"], "result": result}), flush=True)
     sys.exit(0)
 if args and args[0] == "login":
     if os.environ.get("TEST_LOGIN_FAIL"):
@@ -212,6 +226,78 @@ class AccountsTests(unittest.TestCase):
         result = self.invoke("select", "account", stdin="9\n2\n")
         self.assertIn("Enter one of the numbers", result.stdout)
         self.assertEqual(self.state()["selected"], self.record("bob@example.com")[0])
+
+    def test_picker_reads_fresh_quotas_for_each_saved_home(self):
+        self.add()
+        self.add("bob@example.com")
+        home = Path(self.record("bob@example.com")[1]["home"])
+        quota = home / "quota.json"
+        quota.write_text(
+            json.dumps(
+                {
+                    "rateLimits": {
+                        "primary": {"usedPercent": 100, "windowDurationMins": 300},
+                        "secondary": {"usedPercent": 82, "windowDurationMins": 10080},
+                    }
+                }
+            )
+        )
+        before = self.state()
+
+        result = self.invoke("select", "account", stdin="q\n", code=130)
+        self.assertIn(
+            "alice@example.com  (pro)  5h: 75% left | weekly: 42% left", result.stdout
+        )
+        self.assertIn(
+            "bob@example.com  (pro)  5h: 0% left | weekly: 18% left", result.stdout
+        )
+        quota.write_text(
+            json.dumps(
+                {
+                    "rateLimits": {
+                        "primary": {"usedPercent": 10, "windowDurationMins": 300},
+                        "secondary": {"usedPercent": 20, "windowDurationMins": 10080},
+                    }
+                }
+            )
+        )
+        result = self.invoke("select", "account", stdin="q\n", code=130)
+        self.assertIn(
+            "bob@example.com  (pro)  5h: 90% left | weekly: 80% left", result.stdout
+        )
+        self.assertEqual(self.state(), before)
+        methods = [event["rpc"]["method"] for event in self.events() if "rpc" in event]
+        self.assertEqual(methods.count("account/rateLimits/read"), 4)
+        self.assertLessEqual(
+            set(methods),
+            {"initialize", "initialized", "account/read", "account/rateLimits/read"},
+        )
+
+    def test_picker_keeps_failed_quota_account_selectable(self):
+        self.add()
+        self.add("bob@example.com")
+        key, record = self.record("alice@example.com")
+        (Path(record["home"]) / "quota-error").touch()
+
+        result = self.invoke("select", "account", stdin="1\n")
+
+        self.assertIn(
+            "alice@example.com  (pro)  5h: unavailable | weekly: unavailable",
+            result.stdout,
+        )
+        self.assertIn(
+            "bob@example.com  (pro)  5h: 75% left | weekly: 42% left", result.stdout
+        )
+        self.assertNotIn("secret-token", result.stdout + result.stderr)
+        self.assertEqual(self.state()["selected"], key)
+
+    def test_direct_selection_and_removal_skip_quota_lookups(self):
+        self.add()
+        self.invoke("select", "account", "alice@example.com")
+        self.invoke("select", "account", "1")
+        self.invoke("remove", "account", stdin="q\n", code=130)
+        methods = [event["rpc"]["method"] for event in self.events() if "rpc" in event]
+        self.assertNotIn("account/rateLimits/read", methods)
 
     def test_cancel_or_eof_does_not_change_selection(self):
         self.add()
@@ -481,6 +567,27 @@ class AccountsTests(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 
+    def test_quota_timeout_reaps_process(self):
+        with patch.dict(os.environ, {**self.env, "TEST_QUOTA_HANG": "1"}):
+            with self.assertRaises(AccountError):
+                asyncio.run(
+                    read_rate_limits(str(self.binary), self.original, timeout=0.2)
+                )
+        pid = next(
+            event["pid"]
+            for event in self.events()
+            if event.get("args") == ["app-server"]
+        )
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    def test_invalid_quota_response_is_safely_rejected(self):
+        (self.original / "quota.json").write_text('["secret-token-do-not-print"]')
+        with patch.dict(os.environ, self.env):
+            with self.assertRaises(AccountError) as error:
+                asyncio.run(read_rate_limits(str(self.binary), self.original))
+        self.assertNotIn("secret-token", str(error.exception))
+
     def test_parallel_selection_keeps_all_accounts(self):
         self.add()
         self.add("bob@example.com")
@@ -532,7 +639,7 @@ class AccountsTests(unittest.TestCase):
         original = termios.tcgetattr(slave)
         child = subprocess.Popen(
             [sys.executable, "-m", "codex_accounts", "select", "account"],
-            env={**self.env, "TERM": "xterm-256color"},
+            env={**self.env, "TERM": "xterm-256color", "COLUMNS": "80", "LINES": "24"},
             stdin=slave,
             stdout=slave,
             stderr=slave,
@@ -564,7 +671,17 @@ class AccountsTests(unittest.TestCase):
         self.add("bob@example.com")
         code, output = self.tty_picker(b"\x1b[B\r")
         self.assertEqual(code, 0, output)
+        self.assertIn("5h: 75% left | weekly: 42% left", output)
         self.assertEqual(self.state()["selected"], self.record("bob@example.com")[0])
+
+    def test_picker_wraps_long_emails_without_hiding_weekly_quota(self):
+        email = "a-long-account-address-that-needs-extra-space@example.com"
+        self.add(email)
+        code, output = self.tty_picker(b"\r")
+        self.assertEqual(code, 0, output)
+        self.assertIn(email, output)
+        self.assertIn("weekly: 42% left", output)
+        self.assertEqual(self.state()["selected"], self.record(email)[0])
 
     def test_escape_and_ctrl_c_restore_terminal_and_leave_selection_unchanged(self):
         self.add()

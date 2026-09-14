@@ -7,7 +7,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from .native import account_environment, codex_binary, read_identity
+from .native import account_environment, codex_binary, read_identity, read_rate_limits
 from .picker import pick
 from .shared import prepare_home
 from .state import AccountError, Store, file_lock, private_directory
@@ -19,6 +19,60 @@ def describe(record: dict) -> str:
     if record.get("kind") == "signedOut":
         detail = "sign-in required"
     return f"{email}  ({detail})"
+
+
+def describe_quota(result: dict | None) -> str:
+    remaining = {300: None, 10080: None}
+    if isinstance(result, dict):
+        limits = result.get("rateLimits")
+        by_id = result.get("rateLimitsByLimitId")
+        if isinstance(by_id, dict) and "codex" in by_id:
+            limits = by_id["codex"]
+        if isinstance(limits, dict) and limits.get("limitId") in (None, "codex"):
+            for name in ("primary", "secondary"):
+                window = limits.get(name)
+                if not isinstance(window, dict):
+                    continue
+                duration = window.get("windowDurationMins")
+                used = window.get("usedPercent")
+                if (
+                    type(duration) is int
+                    and duration in remaining
+                    and type(used) is int
+                ):
+                    remaining[duration] = max(0, min(100, 100 - used))
+    return " | ".join(
+        f"{label}: {remaining[duration]}% left"
+        if remaining[duration] is not None
+        else f"{label}: unavailable"
+        for label, duration in (("5h", 300), ("weekly", 10080))
+    )
+
+
+def quota_labels(accounts: dict[str, dict]) -> dict[str, str]:
+    """Refresh picker quotas in parallel; unavailable accounts stay selectable."""
+    try:
+        binary = codex_binary()
+    except AccountError:
+        return {key: describe_quota(None) for key in accounts}
+
+    async def collect():
+        semaphore = asyncio.Semaphore(4)
+
+        async def read(key, record):
+            result = None
+            home = Path(record["home"])
+            if record.get("kind") in (None, "chatgpt") and home.is_dir():
+                async with semaphore:
+                    try:
+                        result = await read_rate_limits(binary, home)
+                    except (AccountError, OSError):
+                        pass
+            return key, describe_quota(result)
+
+        return dict(await asyncio.gather(*(read(k, r) for k, r in accounts.items())))
+
+    return asyncio.run(collect())
 
 
 def refresh(store: Store, *, force: bool = False, only: str | None = None) -> dict:
@@ -198,10 +252,17 @@ def choose(
         raise AccountError("No saved accounts. Run codex add account.")
     if selector is not None:
         return store.resolve(selector, state)
+    quotas = {}
+    if not remove:
+        print("Checking account quotas...", flush=True)
+        quotas = quota_labels(state["accounts"])
     title = "Choose an account to remove:" if remove else "Choose the account to use:"
     print(title)
     return pick(
-        [(key, describe(record)) for key, record in store.rows(state)],
+        [
+            (key, describe(record) + (f"  {quotas[key]}" if key in quotas else ""))
+            for key, record in store.rows(state)
+        ],
         selected=state["selected"],
     )
 

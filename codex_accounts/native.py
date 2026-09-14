@@ -47,7 +47,39 @@ def account_environment(home: Path) -> dict[str, str]:
 
 
 async def read_identity(binary: str, home: Path, *, timeout: float = 12) -> dict:
-    """Read account/read via stdio, with a deadline and no thread/model requests."""
+    """Read the saved identity without requesting a token refresh."""
+    result = await _read_account(
+        binary, home, "account/read", params={"refreshToken": False}, timeout=timeout
+    )
+    if "account" not in result:
+        raise AccountError("Codex returned invalid account metadata.")
+    account = result["account"]
+    if account is None:
+        return {"email": None, "plan": None, "kind": "signedOut"}
+    if not isinstance(account, dict) or not safe_text(account.get("type"), limit=64):
+        raise AccountError("Codex returned an unsupported account identity.")
+    email, plan = account.get("email"), account.get("planType")
+    if email is not None and not valid_email(email):
+        raise AccountError("Codex did not return a valid email address.")
+    if plan is not None and not safe_text(plan, limit=64):
+        raise AccountError("Codex returned invalid account plan metadata.")
+    return {"email": email, "plan": plan, "kind": account["type"]}
+
+
+async def read_rate_limits(binary: str, home: Path, *, timeout: float = 5) -> dict:
+    """Read live quota metadata through Codex's own credential backend."""
+    return await _read_account(binary, home, "account/rateLimits/read", timeout=timeout)
+
+
+async def _read_account(
+    binary: str,
+    home: Path,
+    method: str,
+    *,
+    params: dict | None = None,
+    timeout: float,
+) -> dict:
+    """Make a bounded stdio account request without starting a conversation."""
     process = await asyncio.create_subprocess_exec(
         binary,
         "app-server",
@@ -99,31 +131,17 @@ async def read_identity(binary: str, home: Path, *, timeout: float = 12) -> dict
         )
         await response(0)
         await send({"method": "initialized", "params": {}})
-        await send(
-            {"id": 1, "method": "account/read", "params": {"refreshToken": False}}
-        )
-        result = await response(1)
-        if "account" not in result:
-            raise AccountError("Codex returned invalid account metadata.")
-        account = result["account"]
-        if account is None:
-            return {"email": None, "plan": None, "kind": "signedOut"}
-        if not isinstance(account, dict) or not safe_text(
-            account.get("type"), limit=64
-        ):
-            raise AccountError("Codex returned an unsupported account identity.")
-        email, plan = account.get("email"), account.get("planType")
-        if email is not None and not valid_email(email):
-            raise AccountError("Codex did not return a valid email address.")
-        if plan is not None and not safe_text(plan, limit=64):
-            raise AccountError("Codex returned invalid account plan metadata.")
-        return {"email": email, "plan": plan, "kind": account["type"]}
+        request = {"id": 1, "method": method}
+        if params is not None:
+            request["params"] = params
+        await send(request)
+        return await response(1)
 
     try:
         return await asyncio.wait_for(exchange(), timeout)
     except (TimeoutError, ValueError, BrokenPipeError, ConnectionError) as error:
         raise AccountError(
-            "Could not read the account email. Try codex list accounts --refresh."
+            "Could not read the account metadata. Try codex list accounts --refresh."
         ) from error
     finally:
         process.stdin.close()

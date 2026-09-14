@@ -4,6 +4,7 @@ import os
 import select
 import shutil
 import sys
+import textwrap
 
 
 def pick(options: list[tuple[str, str]], *, selected: str | None = None) -> str | None:
@@ -43,17 +44,38 @@ def pick(options: list[tuple[str, str]], *, selected: str | None = None) -> str 
     def draw() -> None:
         nonlocal drawn
         size = shutil.get_terminal_size()
-        visible = min(len(options), max(1, size.lines - 6))
-        start = min(max(0, index - visible // 2), len(options) - visible)
+        width = max(1, size.columns - 1)
+        available = max(1, size.lines - 6)
+        rows = []
+        for i, (_, label) in enumerate(options):
+            mark = ">" if i == index else " "
+            rows.append(
+                textwrap.wrap(
+                    f" {mark} {i + 1}. {label}",
+                    width=width,
+                    subsequent_indent="    " if width > 4 else "",
+                    break_on_hyphens=False,
+                )
+            )
+        start = end = index
+        used = len(rows[index])
+        while start > 0 and used + len(rows[start - 1]) <= available // 2:
+            start -= 1
+            used += len(rows[start])
+        while end + 1 < len(rows) and used + len(rows[end + 1]) <= available:
+            end += 1
+            used += len(rows[end])
+        while start > 0 and used + len(rows[start - 1]) <= available:
+            start -= 1
+            used += len(rows[start])
         if drawn:
             sys.stdout.write(f"\x1b[{drawn}A\r")
         lines = ["Select an account", ""]
-        for i in range(start, start + visible):
-            mark = ">" if i == index else " "
-            lines.append(f" {mark} {i + 1}. {options[i][1]}")
+        for row in rows[start : end + 1]:
+            lines.extend(row[:available])
         lines += ["", "Up/Down or j/k | Enter select | Esc cancel"]
         for line in lines:
-            sys.stdout.write("\x1b[2K" + line[: max(1, size.columns - 1)] + "\r\n")
+            sys.stdout.write("\x1b[2K" + line[:width] + "\r\n")
         for _ in range(max(0, drawn - len(lines))):
             sys.stdout.write("\x1b[2K\r\n")
         if drawn > len(lines):

@@ -36,6 +36,20 @@ then **Enter** to select. **Esc**, **q**, or **Ctrl+C** cancels without changing
 selection. A numbered-input menu is used when arrow-key terminal support is
 unavailable. Long lists scroll in the terminal.
 
+The picker checks each saved account's live quota and shows the percentage left
+in its 5-hour and weekly windows, like `/status`:
+
+```text
+ > 1. alice@example.com  (pro)  5h: 75% left | weekly: 42% left
+   2. bob@example.com  (plus)  5h: 0% left | weekly: 18% left
+```
+
+Quotas are refreshed in parallel whenever the picker opens. These percentages
+describe the remaining usage allowance, not a number of hours of model runtime.
+Missing windows, signed-out accounts, unsupported account types, and failed
+lookups show `unavailable`; the account can still be selected. Each lookup has a
+short timeout. Selecting an email or number directly skips quota lookups.
+
 Selection is saved for future launches. Run `codex` to start, or choose and
 launch together:
 
@@ -313,6 +327,11 @@ no model requests. Codex's credential backend handles both file and keyring
 storage. The manager never reads, copies, or parses raw tokens. The
 [official account API documentation](https://learn.chatgpt.com/docs/app-server)
 describes this interface and its nullable email field.
+
+The selection picker also uses `account/rateLimits/read` to retrieve live quota
+metadata through the same official interface. These lookups submit no model
+requests. Quotas are kept only for the current picker, so cached account lists
+and the registry do not retain stale usage figures.
 
 Only home paths, emails, plan metadata, and the chosen account ID enter the
 registry. On Linux it lives in `~/.local/share/codex-accounts/accounts.json`,

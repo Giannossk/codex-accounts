@@ -14,9 +14,9 @@ ACCOUNT_HELP = """
 Account commands:
   codex add account                Sign in and discover the account's email
   codex list accounts              List saved email accounts
-  codex select account             Choose an account with an interactive picker
-  codex select account EMAIL       Select by email
-  codex select account --run       Choose an account and start Codex
+  codex select account             Choose an account and start Codex
+  codex select account EMAIL       Select by email and start Codex
+  codex select account --no-run    Choose an account without starting Codex
   codex current account            Show the selected email
   codex remove account             Remove an account from the list
   codex share data                 Share settings, skills, plugins, and history now
@@ -46,13 +46,23 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Refresh cached email and plan information",
     )
-    selecting = commands.add_parser("select", help="Select the account to use")
+    selecting = commands.add_parser("select", help="Select an account and start Codex")
     selecting.add_argument("subject", choices=["account"])
     selecting.add_argument(
         "email", nargs="?", help="An email or a number from the account list"
     )
-    selecting.add_argument(
-        "--run", action="store_true", help="Start Codex after selecting"
+    launching = selecting.add_mutually_exclusive_group()
+    launching.add_argument(
+        "--run",
+        action="store_true",
+        default=True,
+        help="Start Codex after selecting (default)",
+    )
+    launching.add_argument(
+        "--no-run",
+        dest="run",
+        action="store_false",
+        help="Select an account without starting Codex",
     )
     current = commands.add_parser("current", help="Show the selected email")
     current.add_argument("subject", choices=["account"])

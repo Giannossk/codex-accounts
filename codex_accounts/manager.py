@@ -276,10 +276,7 @@ def select_account(store: Store, selector: str | None = None) -> str | None:
         store.home(key, state)
         state["selected"] = key
         record = state["accounts"][key]
-    print(
-        f"Selected {record.get('email') or 'the saved login'}. Run codex to start.",
-        flush=True,
-    )
+    print(f"Selected {record.get('email') or 'the saved login'}.", flush=True)
     return key
 
 

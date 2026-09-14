@@ -16,6 +16,7 @@ class PortableTests(unittest.TestCase):
 
         self.assertEqual(arguments.command, "select")
         self.assertEqual(arguments.subject, "account")
+        self.assertTrue(arguments.run)
 
     def test_numbered_picker_works_without_posix_terminal_features(self):
         output = io.StringIO()

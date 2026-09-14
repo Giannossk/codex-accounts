@@ -226,6 +226,9 @@ class AccountsTests(unittest.TestCase):
         result = self.invoke("select", "account", stdin="9\n2\n")
         self.assertIn("Enter one of the numbers", result.stdout)
         self.assertEqual(self.state()["selected"], self.record("bob@example.com")[0])
+        launches = [event for event in self.events() if event.get("args") == []]
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(launches[0]["home"], self.record("bob@example.com")[1]["home"])
 
     def test_picker_reads_fresh_quotas_for_each_saved_home(self):
         self.add()
@@ -303,9 +306,13 @@ class AccountsTests(unittest.TestCase):
         self.add()
         self.invoke("select", "account", "alice@example.com")
         before = self.state()
+        launches = [event for event in self.events() if event.get("args") == []]
         self.invoke("select", "account", stdin="q\n", code=130)
         self.invoke("select", "account", stdin="", code=130)
         self.assertEqual(self.state(), before)
+        self.assertEqual(
+            [event for event in self.events() if event.get("args") == []], launches
+        )
 
     def test_empty_registry_does_not_launch_original_login(self):
         result = self.invoke("list", "accounts")
@@ -340,11 +347,50 @@ class AccountsTests(unittest.TestCase):
         self.invoke("--account=bob@example.com", "--exit-37", code=37)
         self.assertEqual(self.state()["selected"], self.record("alice@example.com")[0])
 
+    def test_direct_selection_starts_the_selected_cli_by_default(self):
+        self.add()
+        self.add("bob@example.com")
+        home = self.record("bob@example.com")[1]["home"]
+        for selector in ("bob@example.com", "2"):
+            with self.subTest(selector=selector):
+                before = len(self.events())
+                result = self.invoke("select", "account", selector)
+                event = json.loads(result.stdout.splitlines()[-1])
+                self.assertEqual(self.events()[before:], [event])
+                self.assertEqual(event["args"], [])
+                self.assertEqual(event["home"], home)
+                self.assertEqual(event["cwd"], str(self.root))
+                self.assertEqual(event["sqlite_home"], str(self.original))
+                self.assertEqual(event["auth_overrides"], [])
+                self.assertEqual(
+                    self.state()["selected"], self.record("bob@example.com")[0]
+                )
+                self.assertNotIn("Run codex to start", result.stdout)
+
     def test_select_and_run_starts_the_selected_cli(self):
         self.add()
         result = self.invoke("select", "account", "alice@example.com", "--run")
         event = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual(event["args"], [])
         self.assertEqual(event["home"], self.record("alice@example.com")[1]["home"])
+
+    def test_select_without_running_saves_selection_only(self):
+        self.add()
+        self.add("bob@example.com")
+        for selector, email in (
+            ([], "bob@example.com"),
+            (["alice@example.com"], "alice@example.com"),
+            (["2"], "bob@example.com"),
+        ):
+            with self.subTest(selector=selector):
+                result = self.invoke(
+                    "select", "account", *selector, "--no-run", stdin="2\n"
+                )
+                self.assertIn(f"Selected {email}.", result.stdout)
+                self.assertEqual(self.state()["selected"], self.record(email)[0])
+                self.assertFalse(
+                    any(event.get("args") == [] for event in self.events())
+                )
 
     def test_accounts_keep_logins_and_share_existing_history(self):
         self.add()
@@ -673,6 +719,9 @@ class AccountsTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn("5h: 75% left | weekly: 42% left", output)
         self.assertEqual(self.state()["selected"], self.record("bob@example.com")[0])
+        launches = [event for event in self.events() if event.get("args") == []]
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(launches[0]["home"], self.record("bob@example.com")[1]["home"])
 
     def test_picker_wraps_long_emails_without_hiding_weekly_quota(self):
         email = "a-long-account-address-that-needs-extra-space@example.com"
@@ -687,10 +736,14 @@ class AccountsTests(unittest.TestCase):
         self.add()
         self.invoke("select", "account", "alice@example.com")
         before = self.state()
+        launches = [event for event in self.events() if event.get("args") == []]
         for kwargs in ({"keys": b"\x1b"}, {"interrupt": True}):
             code, output = self.tty_picker(**kwargs)
             self.assertEqual(code, 130, output)
             self.assertEqual(self.state(), before)
+            self.assertEqual(
+                [event for event in self.events() if event.get("args") == []], launches
+            )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ shared across accounts; each login keeps its own credentials.
 codex add account
 codex list accounts
 codex select account
-codex
 ```
 
 Each `codex add account` starts the official browser sign-in flow in a new,
@@ -32,9 +31,9 @@ Saved accounts
 ```
 
 `codex select account` opens the account picker. Use **Up/Down** or **j/k**,
-then **Enter** to select. **Esc**, **q**, or **Ctrl+C** cancels without changing the
-selection. A numbered-input menu is used when arrow-key terminal support is
-unavailable. Long lists scroll in the terminal.
+then **Enter** to select and start Codex. **Esc**, **q**, or **Ctrl+C** cancels
+without changing the selection or starting Codex. A numbered-input menu is used
+when arrow-key terminal support is unavailable. Long lists scroll in the terminal.
 
 The picker checks each saved account's live quota and shows the percentage left
 in its 5-hour and weekly windows, like `/status`:
@@ -50,22 +49,24 @@ Missing windows, signed-out accounts, unsupported account types, and failed
 lookups show `unavailable`; the account can still be selected. Each lookup has a
 short timeout. Selecting an email or number directly skips quota lookups.
 
-Selection is saved for future launches. Run `codex` to start, or choose and
-launch together:
+Selection starts Codex immediately and is saved for future launches. Later,
+run `codex` to reuse the selected account. To select without starting Codex:
 
 ```bash
-codex select account --run
+codex select account --no-run
 ```
 
-A running Codex session keeps its account. Exit it normally and start another
-session after selecting a different account; logging out is unnecessary.
+The existing `--run` flag is still accepted. A running Codex session keeps its
+account. Exit it normally and use `codex select account` to choose a different
+account and start another session; logging out is unnecessary.
 
 ## More controls
 
 | Command | Behavior |
 | --- | --- |
-| `codex select account alice@example.com` | Select an email directly. |
-| `codex select account 2` | Select a number from the displayed list. |
+| `codex select account alice@example.com` | Select an email directly and start Codex. |
+| `codex select account 2` | Select a number from the displayed list and start Codex. |
+| `codex select account --no-run` | Select an account without starting Codex. |
 | `codex current account` | Show the selected email. |
 | `codex --account alice@example.com exec "Review this repository"` | Use an account for one launch without changing the saved selection. |
 | `codex add account --device-auth` | Sign in using the official device-code flow. |
@@ -216,12 +217,11 @@ codex add account
 codex add account
 codex list accounts
 codex select account
-codex
 ```
 
 Each `add account` login is saved in its own Codex home. `select account`
-changes the account used by the next session; it never logs out another saved
-account. On Windows, the picker uses numbered input. On POSIX terminals,
+saves the selection and starts Codex with that account; it never logs out another
+saved account. On Windows, the picker uses numbered input. On POSIX terminals,
 arrow keys and `j`/`k` are also available.
 
 ### Updating or uninstalling
@@ -247,10 +247,11 @@ Each saved login has a stable, separate `CODEX_HOME` for credentials. All accoun
 share the existing data at `~/.codex`: settings (`config.toml`), skills, plugins,
 instructions (`AGENTS.md`), rules, prompts, agents, automations, memories, caches,
 and history. Switching accounts changes the login while keeping your setup.
-Selecting an account chooses the login used for both new and resumed chats:
+Selecting an account chooses the login used for both new and resumed chats.
+Use `--no-run` to select before resuming an existing chat:
 
 ```sh
-codex select account alice@example.com
+codex select account alice@example.com --no-run
 codex resume
 codex resume SESSION_ID
 ```
@@ -318,8 +319,8 @@ users must enable Developer Mode or run with permission to create them.
 
 The manager does not import the original default login automatically. If no
 account is selected, an interactive Codex launch opens the picker; scripts must
-select an account or supply `--account EMAIL`. Empty registries ask you to add
-an account. Quota errors never cause automatic switching or retries.
+select an account with `--no-run` or supply `--account EMAIL`. Empty registries ask
+you to add an account. Quota errors never cause automatic switching or retries.
 
 Email discovery uses Codex's local stdio `account/read` API with
 `refreshToken: false`. It reads metadata, starts no conversations, and submits

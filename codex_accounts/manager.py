@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -159,8 +160,11 @@ def add_account(
             arguments = [binary, "login"]
             if device_auth:
                 arguments.append("--device-auth")
+            cmd = arguments
+            if os.name == "nt" and cmd[0].lower().endswith((".cmd", ".bat")):
+                cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *cmd]
             result = subprocess.run(
-                arguments, env=account_environment(home), check=False
+                cmd, env=account_environment(home), check=False
             )
             if result.returncode:
                 print(

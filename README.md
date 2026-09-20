@@ -128,40 +128,50 @@ Linux and macOS:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Windows PowerShell:
+Windows (PowerShell or Command Prompt):
 
 ```powershell
-irm https://astral.sh/uv/install.ps1 | iex
+pip install -e .
 ```
 
-Open a new terminal after installing `uv`, then change to this repository and
-install the package as an editable command-line tool:
+Or with `uv`:
 
-```bash
-cd /path/to/codex-accounts
+```powershell
 uv tool install --editable .
 ```
 
-PowerShell uses the same installation command:
-
-```powershell
-Set-Location C:\path\to\codex-accounts
-uv tool install --editable .
-```
-
-If `codex-accounts` is not found after installation, run `uv tool update-shell`,
-open a new terminal, and try again.
+Open a new terminal after installation. `codex` and `codex-accounts` are placed
+directly in your PATH and are immediately available in any directory in both
+PowerShell and Command Prompt (CMD).
 
 ### 3. Enable the `codex` wrapper
 
-On Bash, enable it in the current terminal with:
+On **Windows (Command Prompt & PowerShell)**:
+No shell configuration is required. The `codex` command is globally installed
+and automatically detects the official Codex executable (whether installed via
+the OpenAI Windows installer or npm) and routes account management commands
+seamlessly from any directory.
+
+If you prefer to define an explicit PowerShell function in `$PROFILE`, run:
+
+```powershell
+codex-accounts shell-init powershell | Out-File -Append $PROFILE
+```
+
+For Command Prompt (`cmd.exe`), you can generate a doskey macro with:
+
+```cmd
+codex-accounts shell-init cmd
+```
+
+On **Bash**, enable it in the current terminal with:
 
 ```bash
 eval "$(codex-accounts shell-init bash)"
 ```
 
 To enable it in future Bash terminals, add that same `eval` line once to
-`~/.bashrc`, then run `source ~/.bashrc`. On Zsh, use the matching commands:
+`~/.bashrc`, then run `source ~/.bashrc`. On **Zsh**, use the matching commands:
 
 ```zsh
 eval "$(codex-accounts shell-init zsh)"
@@ -171,46 +181,9 @@ Add the Zsh line to `~/.zshrc` for persistence. The generated function keeps
 the official Codex executable as the backend and routes account-management
 commands through this package.
 
-PowerShell does not use the Bash/Zsh `shell-init` output. Add the following to
-`$PROFILE` (open it with `notepad $PROFILE`), then reload it with `. $PROFILE`:
-
-```powershell
-$script:CodexOfficial = @(
-    (Get-Command codex.cmd -CommandType Application -ErrorAction SilentlyContinue).Source
-    (Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue).Source
-    (Get-Command codex -CommandType Application -ErrorAction SilentlyContinue).Source
-) | Where-Object { $_ } | Select-Object -First 1
-
-if (-not $script:CodexOfficial) {
-    throw "Install the official Codex CLI before enabling the account wrapper."
-}
-
-function codex {
-    $previous = $env:CODEX_ACCOUNTS_CODEX_BIN
-    $env:CODEX_ACCOUNTS_CODEX_BIN = $script:CodexOfficial
-    try {
-        & codex-accounts @args
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        if ($null -eq $previous) {
-            Remove-Item Env:CODEX_ACCOUNTS_CODEX_BIN -ErrorAction SilentlyContinue
-        } else {
-            $env:CODEX_ACCOUNTS_CODEX_BIN = $previous
-        }
-    }
-    if ($null -ne $exitCode) {
-        $global:LASTEXITCODE = $exitCode
-    }
-}
-```
-
-If you do not want a PowerShell wrapper, the executable is always available as
-`codex-accounts`; for example, use `codex-accounts list accounts`.
-
 ### 4. Add and select accounts
 
-After the wrapper is enabled, the commands are the same on all platforms:
+After installation, the commands are the same on all platforms and in all shells:
 
 ```text
 codex add account
@@ -221,8 +194,9 @@ codex select account
 
 Each `add account` login is saved in its own Codex home. `select account`
 saves the selection and starts Codex with that account; it never logs out another
-saved account. On Windows, the picker uses numbered input. On POSIX terminals,
-arrow keys and `j`/`k` are also available.
+saved account. Use **Up/Down** or **j/k**, then **Enter** to select; numbered
+input is also supported as a fallback. On Windows, NTFS junctions and hard links
+are used automatically, so Developer Mode is not required.
 
 ### Updating or uninstalling
 

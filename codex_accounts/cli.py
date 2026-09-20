@@ -1,6 +1,7 @@
 """The codex add/list/select account command interface."""
 
 import argparse
+import os
 import shlex
 import subprocess
 import sys
@@ -74,7 +75,7 @@ def parser() -> argparse.ArgumentParser:
     )
     sharing.add_argument("subject", choices=["data"])
     shell = commands.add_parser("shell-init", help="Print shell integration")
-    shell.add_argument("shell", choices=["bash", "zsh"])
+    shell.add_argument("shell", choices=["bash", "zsh", "powershell", "pwsh", "cmd"])
     return root
 
 
@@ -107,12 +108,43 @@ def manage(store: Store, arguments: list[str]) -> int:
         )
         return 0
     if args.command == "shell-init":
-        print(
-            "codex() {\n"
-            f"    CODEX_ACCOUNTS_CODEX_BIN={shlex.quote(codex_binary())} "
-            f'{shlex.quote(sys.executable)} -m codex_accounts "$@"\n'
-            "}"
-        )
+        bin_path = codex_binary()
+        py_exe = sys.executable
+        if args.shell in ("bash", "zsh"):
+            print(
+                "codex() {\n"
+                f"    CODEX_ACCOUNTS_CODEX_BIN={shlex.quote(bin_path)} "
+                f'{shlex.quote(py_exe)} -m codex_accounts "$@"\n'
+                "}"
+            )
+        elif args.shell in ("powershell", "pwsh"):
+            print(
+                f'$script:CodexOfficial = "{bin_path}"\n'
+                "function codex {\n"
+                "    $previous = $env:CODEX_ACCOUNTS_CODEX_BIN\n"
+                "    $env:CODEX_ACCOUNTS_CODEX_BIN = $script:CodexOfficial\n"
+                "    try {\n"
+                f'        & "{py_exe}" -m codex_accounts @args\n'
+                "        $exitCode = $LASTEXITCODE\n"
+                "    }\n"
+                "    finally {\n"
+                "        if ($null -eq $previous) {\n"
+                "            Remove-Item Env:CODEX_ACCOUNTS_CODEX_BIN -ErrorAction SilentlyContinue\n"
+                "        } else {\n"
+                "            $env:CODEX_ACCOUNTS_CODEX_BIN = $previous\n"
+                "        }\n"
+                "    }\n"
+                "    if ($null -ne $exitCode) {\n"
+                "        $global:LASTEXITCODE = $exitCode\n"
+                "    }\n"
+                "}"
+            )
+        elif args.shell == "cmd":
+            print(
+                "@echo off\n"
+                "REM Codex Accounts CMD integration\n"
+                f'doskey codex="{py_exe}" -m codex_accounts $*'
+            )
         return 0
     raise AccountError("Unknown account command.")
 
@@ -134,7 +166,10 @@ def run(arguments: list[str]) -> int:
             "Use codex add account, codex list accounts, or codex select account. Accounts are identified by email."
         )
     if arguments in (["--help"], ["-h"], ["help"], ["--version"], ["-V"]):
-        code = subprocess.call([codex_binary(), *arguments])
+        cmd = [codex_binary(), *arguments]
+        if os.name == "nt" and cmd[0].lower().endswith((".cmd", ".bat")):
+            cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *cmd]
+        code = subprocess.call(cmd)
         if arguments[0] in ("--help", "-h", "help") and code == 0:
             print(ACCOUNT_HELP)
         return code
@@ -166,8 +201,11 @@ def run(arguments: list[str]) -> int:
     home = store.home(key)
     if arguments and arguments[0] in ("login", "logout"):
         prepare_home(store, home)
+        cmd = [codex_binary(), *arguments]
+        if os.name == "nt" and cmd[0].lower().endswith((".cmd", ".bat")):
+            cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *cmd]
         result = subprocess.run(
-            [codex_binary(), *arguments], env=account_environment(home), check=False
+            cmd, env=account_environment(home), check=False
         )
         if result.returncode == 0 and not any(
             arg in ("--help", "-h") for arg in arguments

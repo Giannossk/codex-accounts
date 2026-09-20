@@ -14,26 +14,117 @@ from .shared import prepare_home
 from .state import AccountError, Store, default_root, safe_text, valid_email
 
 
-def codex_binary() -> str:
-    candidate = os.environ.get("CODEX_ACCOUNTS_CODEX_BIN") or "codex"
-    binary = shutil.which(candidate)
-    if binary is None:
-        raise AccountError(
-            "Install Codex CLI or set CODEX_ACCOUNTS_CODEX_BIN to its executable."
-        )
-    resolved = Path(binary).resolve()
-    wrappers = {
-        Path(sys.argv[0]).resolve(),
-        (Path(sys.executable).parent / "codex-accounts").resolve(),
-        (Path(sys.executable).parent / "codex-accounts.exe").resolve(),
-    }
+def _is_wrapper(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+
+    wrappers = set()
+    if sys.argv and sys.argv[0]:
+        try:
+            wrappers.add(Path(sys.argv[0]).resolve())
+        except OSError:
+            pass
+
+    py_dir = Path(sys.executable).parent.resolve()
+    for sub in ("", "Scripts", "bin"):
+        folder = (py_dir / sub).resolve()
+        for stem in ("codex", "codex-accounts"):
+            wrappers.add((folder / stem).resolve())
+            wrappers.add((folder / f"{stem}.exe").resolve())
+            wrappers.add((folder / f"{stem}.cmd").resolve())
+            wrappers.add((folder / f"{stem}.bat").resolve())
+
     if wrapper := shutil.which("codex-accounts"):
-        wrappers.add(Path(wrapper).resolve())
+        try:
+            wrappers.add(Path(wrapper).resolve())
+        except OSError:
+            pass
+
     if resolved in wrappers:
-        raise AccountError(
-            "The Codex executable points back to this wrapper. Set CODEX_ACCOUNTS_CODEX_BIN to the official CLI."
-        )
-    return str(resolved)
+        return True
+    if resolved.parent in (py_dir, (py_dir / "Scripts").resolve(), (py_dir / "bin").resolve()):
+        if resolved.stem in ("codex", "codex-accounts"):
+            return True
+
+    return False
+
+
+def codex_binary() -> str:
+    if custom := os.environ.get("CODEX_ACCOUNTS_CODEX_BIN"):
+        binary = shutil.which(custom)
+        if binary is None:
+            raise AccountError(
+                f"CODEX_ACCOUNTS_CODEX_BIN executable not found: {custom}"
+            )
+        resolved = Path(binary).resolve()
+        if _is_wrapper(resolved):
+            raise AccountError(
+                "The Codex executable points back to this wrapper. Set CODEX_ACCOUNTS_CODEX_BIN to the official CLI."
+            )
+        return str(resolved)
+
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    extensions = [""]
+    if os.name == "nt":
+        pathext = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
+        extensions = [ext.lower() for ext in pathext if ext]
+        if ".exe" not in extensions:
+            extensions.insert(0, ".exe")
+
+    for directory in path_dirs:
+        if not directory:
+            continue
+        dir_path = Path(directory)
+        for ext in extensions:
+            candidate = dir_path / f"codex{ext}"
+            try:
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    if not _is_wrapper(candidate):
+                        return str(candidate.resolve())
+            except OSError:
+                continue
+
+    standard_paths = []
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        app_data = os.environ.get("APPDATA")
+        program_files = os.environ.get("ProgramFiles")
+        program_files_x86 = os.environ.get("ProgramFiles(x86)")
+        user_profile = os.environ.get("USERPROFILE")
+
+        if local_app_data:
+            standard_paths.append(Path(local_app_data) / "Programs/OpenAI/Codex/bin/codex.exe")
+            standard_paths.append(Path(local_app_data) / "npm/codex.cmd")
+        if program_files:
+            standard_paths.append(Path(program_files) / "OpenAI/Codex/bin/codex.exe")
+        if program_files_x86:
+            standard_paths.append(Path(program_files_x86) / "OpenAI/Codex/bin/codex.exe")
+        if app_data:
+            standard_paths.append(Path(app_data) / "npm/codex.cmd")
+            standard_paths.append(Path(app_data) / "npm/codex")
+        if user_profile:
+            standard_paths.append(Path(user_profile) / "AppData/Local/Programs/OpenAI/Codex/bin/codex.exe")
+    else:
+        standard_paths.extend([
+            Path("/usr/local/bin/codex"),
+            Path("/opt/homebrew/bin/codex"),
+            Path.home() / ".local/bin/codex",
+            Path.home() / ".npm-global/bin/codex",
+        ])
+
+    for candidate in standard_paths:
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                if not _is_wrapper(candidate):
+                    return str(candidate.resolve())
+        except OSError:
+            continue
+
+    raise AccountError(
+        "Install Codex CLI or set CODEX_ACCOUNTS_CODEX_BIN to its executable."
+    )
 
 
 def account_environment(home: Path) -> dict[str, str]:
@@ -80,8 +171,11 @@ async def _read_account(
     timeout: float,
 ) -> dict:
     """Make a bounded stdio account request without starting a conversation."""
+    cmd = [binary]
+    if os.name == "nt" and binary.lower().endswith((".cmd", ".bat")):
+        cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", binary]
     process = await asyncio.create_subprocess_exec(
-        binary,
+        *cmd,
         "app-server",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -177,4 +271,7 @@ def launch(home: Path, arguments: list[str]) -> int:
     sys.stderr.flush()
     if os.name == "posix":
         os.execve(binary, [binary, *arguments], env)
-    return subprocess.call([binary, *arguments], env=env)
+    cmd = [binary, *arguments]
+    if os.name == "nt" and binary.lower().endswith((".cmd", ".bat")):
+        cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", binary, *arguments]
+    return subprocess.call(cmd, env=env)

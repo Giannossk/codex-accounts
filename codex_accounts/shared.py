@@ -10,9 +10,16 @@ import uuid
 from datetime import date, datetime, time
 from pathlib import Path
 
-from .history import DIRECTORIES as HISTORY_DIRECTORIES
-from .history import FILES as HISTORY_FILES
-from .history import _linked, _write_json, prepare_history
+from .history import (
+    DIRECTORIES as HISTORY_DIRECTORIES,
+    FILES as HISTORY_FILES,
+    _linked,
+    _write_json,
+    create_link,
+    is_link,
+    prepare_history,
+    remove_link,
+)
 from .state import AccountError, Store, file_lock, private_directory
 
 MARKER = ".codex-accounts-shared"
@@ -194,9 +201,9 @@ def _merge(
     repair: bool = False,
     ancestors: frozenset[Path] = frozenset(),
 ) -> None:
-    if not source.exists() and not source.is_symlink():
+    if not source.exists() and not is_link(source):
         return
-    if target.is_symlink() and target.resolve().is_relative_to(source.absolute()):
+    if is_link(target) and target.resolve().is_relative_to(source.absolute()):
         raise AccountError(
             f"Shared data links back into an account home: {target}; originals retained."
         )
@@ -209,10 +216,10 @@ def _merge(
                 f"Recursive directory link in {source}; originals retained."
             )
         ancestors = ancestors | {resolved}
-    if not target.exists() and not target.is_symlink():
-        if source.is_symlink():
+    if not target.exists() and not is_link(target):
+        if is_link(source):
             # Absolute links keep externally installed skills working after relocation.
-            target.symlink_to(source.resolve(), target_is_directory=source.is_dir())
+            create_link(target, source.resolve(), target_is_directory=source.is_dir())
         elif source.is_dir():
             private_directory(target)
             for child in sorted(source.iterdir()):
@@ -269,13 +276,13 @@ def prepare_home(store: Store, account_home: Path | None = None) -> Path:
             manifests[home] = _manifest(home, target)
             probe = home / f".shared-link-test-{uuid.uuid4().hex}"
             try:
-                probe.symlink_to(target, target_is_directory=True)
+                create_link(probe, target, target_is_directory=True)
             except OSError as error:
                 raise AccountError(
-                    "Shared Codex data requires symbolic links. On Windows, enable Developer Mode and retry."
+                    "Shared Codex data requires symbolic links or NTFS junctions."
                 ) from error
             finally:
-                probe.unlink(missing_ok=True)
+                remove_link(probe)
         for name in DIRECTORIES:
             private_directory(target / name)
         if not (target / "config.toml").exists():
@@ -302,16 +309,16 @@ def prepare_home(store: Store, account_home: Path | None = None) -> Path:
         for home, pending, backup in migrations:
             for name in pending:
                 source, destination = home / name, target / name
-                if source.exists() or source.is_symlink():
+                if source.exists() or is_link(source):
                     private_directory(backup / "account")
                     source.rename(backup / "account" / name)
                 try:
-                    source.symlink_to(
-                        destination, target_is_directory=destination.is_dir()
+                    create_link(
+                        source, destination, target_is_directory=destination.is_dir()
                     )
                 except OSError:
                     original = backup / "account" / name
-                    if original.exists() or original.is_symlink():
+                    if original.exists() or is_link(original):
                         original.rename(source)
                     raise
             _write_json(

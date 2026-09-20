@@ -1,10 +1,28 @@
 """Terminal picker with arrow keys and a numbered-input fallback."""
 
 import os
-import select
 import shutil
 import sys
 import textwrap
+
+
+def _numbered_pick(options: list[tuple[str, str]]) -> str | None:
+    for number, (_, label) in enumerate(options, 1):
+        print(f"  {number}. {label}")
+    while True:
+        try:
+            value = input(
+                f"Select account [1-{len(options)}], or q to cancel: "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nSelection cancelled.")
+            return None
+        if value.casefold() in ("q", "quit", "cancel", ""):
+            print("Selection cancelled.")
+            return None
+        if value.isascii() and value.isdigit() and 0 < int(value) <= len(options):
+            return options[int(value) - 1][0]
+        print("Enter one of the numbers shown above.")
 
 
 def pick(options: list[tuple[str, str]], *, selected: str | None = None) -> str | None:
@@ -13,30 +31,26 @@ def pick(options: list[tuple[str, str]], *, selected: str | None = None) -> str 
     if (
         not (sys.stdin.isatty() and sys.stdout.isatty())
         or os.environ.get("TERM") == "dumb"
-        or os.name != "posix"
     ):
-        for number, (_, label) in enumerate(options, 1):
-            print(f"  {number}. {label}")
-        while True:
-            try:
-                value = input(
-                    f"Select account [1-{len(options)}], or q to cancel: "
-                ).strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\nSelection cancelled.")
-                return None
-            if value.casefold() in ("q", "quit", "cancel", ""):
-                print("Selection cancelled.")
-                return None
-            if value.isascii() and value.isdigit() and 0 < int(value) <= len(options):
-                return options[int(value) - 1][0]
-            print("Enter one of the numbers shown above.")
+        return _numbered_pick(options)
 
-    import termios
-    import tty
+    if os.name == "nt":
+        try:
+            import ctypes
+            import msvcrt
 
-    fd = sys.stdin.fileno()
-    previous = termios.tcgetattr(fd)
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_ulong()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(
+                    handle, mode.value | 0x0004
+                )  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        except Exception:
+            return _numbered_pick(options)
+    elif os.name != "posix":
+        return _numbered_pick(options)
+
     index = next((i for i, (key, _) in enumerate(options) if key == selected), 0)
     drawn = 0
     chosen = None
@@ -83,6 +97,50 @@ def pick(options: list[tuple[str, str]], *, selected: str | None = None) -> str 
         drawn = len(lines)
         sys.stdout.flush()
 
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            sys.stdout.write("\x1b[?25l")
+            draw()
+            while True:
+                ch = msvcrt.getwch()
+                if ch in ("\x00", "\xe0"):
+                    code = msvcrt.getwch()
+                    key = "k" if code == "H" else ("j" if code == "P" else "ignore")
+                elif ch in ("\r", "\n"):
+                    key = "\n"
+                elif ch in ("\x1b", "q", "Q", "\x03", "\x04"):
+                    key = "q"
+                elif ch in ("j", "k"):
+                    key = ch
+                else:
+                    key = "ignore"
+
+                if key in ("", "q"):
+                    break
+                if key == "\n":
+                    chosen = options[index][0]
+                    break
+                if key in ("j", "k"):
+                    index = (index + (1 if key == "j" else -1)) % len(options)
+                    draw()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            sys.stdout.write("\x1b[?25h")
+            if chosen is None:
+                print("Selection cancelled.")
+            sys.stdout.flush()
+        return chosen
+
+    # POSIX
+    import select
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    previous = termios.tcgetattr(fd)
     try:
         tty.setcbreak(fd)
         sys.stdout.write("\x1b[?25l")

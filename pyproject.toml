@@ -13,6 +13,7 @@ authors = [{ name = "IOANNIS SIOKOS" }]
 
 [project.scripts]
 codex-accounts = "codex_accounts.cli:main"
+codex = "codex_accounts.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["codex_accounts"]

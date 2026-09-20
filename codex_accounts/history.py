@@ -79,8 +79,59 @@ def _write_json(path: Path, value: object) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def is_junction(path: Path) -> bool:
+    if os.name != "nt":
+        return False
+    if hasattr(path, "is_junction"):
+        try:
+            return path.is_junction()
+        except OSError:
+            return False
+    if hasattr(os.path, "isjunction"):
+        try:
+            return os.path.isjunction(str(path))
+        except OSError:
+            return False
+    return False
+
+
+def is_link(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    return is_junction(path)
+
+
+def create_link(source: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        source.symlink_to(target, target_is_directory=target_is_directory)
+        return
+    except OSError:
+        if os.name != "nt":
+            raise
+    if target_is_directory or target.is_dir():
+        import _winapi
+
+        _winapi.CreateJunction(str(target.resolve()), str(source))
+    else:
+        try:
+            os.link(str(target.resolve()), str(source))
+        except OSError:
+            shutil.copy2(target, source)
+
+
 def _linked(source: Path, target: Path) -> bool:
-    return source.is_symlink() and source.resolve() == target.resolve()
+    if not source.exists() and not is_link(source):
+        return False
+    if not target.exists():
+        return False
+    try:
+        if is_link(source):
+            return source.resolve() == target.resolve()
+        if os.name == "nt" and source.is_file() and target.is_file():
+            return source.samefile(target)
+        return source.resolve() == target.resolve()
+    except OSError:
+        return False
 
 
 def _idle(account_home: Path, stack: ExitStack) -> None:
@@ -312,6 +363,16 @@ def _merge_lines(source: Path, target: Path) -> None:
             os.fsync(handle.fileno())
 
 
+def remove_link(path: Path) -> None:
+    if is_junction(path):
+        try:
+            path.unlink()
+        except OSError:
+            os.rmdir(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
 def _join(account_home: Path, target: Path, store: Store) -> None:
     if account_home.resolve() == target.resolve():
         return
@@ -320,17 +381,16 @@ def _join(account_home: Path, target: Path, store: Store) -> None:
         _linked(account_home / name, target / name) for name in names
     ):
         return
-    # A symlink probe fails before moving any originals on systems that do not
-    # permit links (e.g. Windows without Developer Mode or elevation).
+    # Probe to ensure linking works before moving originals.
     probe = account_home / f".history-link-test-{uuid.uuid4().hex}"
     try:
-        probe.symlink_to(target, target_is_directory=True)
+        create_link(probe, target, target_is_directory=True)
     except OSError as error:
         raise AccountError(
-            "Shared history requires symbolic links. On Windows, enable Developer Mode and retry."
+            "Shared history requires symbolic links or NTFS junctions."
         ) from error
     finally:
-        probe.unlink(missing_ok=True)
+        remove_link(probe)
 
     with ExitStack() as stack:
         # If only a legacy index link was replaced by Codex, directory/lock
@@ -342,7 +402,7 @@ def _join(account_home: Path, target: Path, store: Store) -> None:
             source, destination = account_home / name, target / name
             if _linked(source, destination):
                 continue
-            if source.is_symlink():
+            if is_link(source):
                 raise AccountError(f"History already links elsewhere: {source}")
             if name in DIRECTORIES:
                 private_directory(destination)
@@ -357,6 +417,7 @@ def _join(account_home: Path, target: Path, store: Store) -> None:
             _import_databases(
                 account_home, target, store.root / "history-backups" / uuid.uuid4().hex
             )
+        stack.close()
         for name in names:
             source, destination = account_home / name, target / name
             if _linked(source, destination):
@@ -364,7 +425,7 @@ def _join(account_home: Path, target: Path, store: Store) -> None:
             if source.exists():
                 private_directory(backup)
                 source.rename(backup / name)
-            source.symlink_to(destination, target_is_directory=name in DIRECTORIES)
+            create_link(source, destination, target_is_directory=name in DIRECTORIES)
         _write_json(account_home / MARKER, str(target))
 
 

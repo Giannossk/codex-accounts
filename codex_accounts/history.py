@@ -410,7 +410,10 @@ def _join(account_home: Path, target: Path, store: Store) -> None:
                     _copy_tree(source, destination)
             else:
                 if not destination.exists():
-                    destination.touch(mode=0o600)
+                    if os.name == "posix":
+                        destination.touch(mode=0o600)
+                    else:
+                        destination.touch()
                 if source.exists():
                     _merge_lines(source, destination)
         if first_join:

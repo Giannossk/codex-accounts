@@ -68,3 +68,13 @@ class WindowsIntegrationTests(unittest.TestCase):
             mock_print.assert_called()
             output = mock_print.call_args[0][0]
             self.assertIn("doskey codex=", output)
+
+    def test_private_directory_preserves_inheritance(self):
+        from codex_accounts.state import private_directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "test_private"
+            private_directory(target_dir)
+            self.assertTrue(target_dir.is_dir())
+            test_file = target_dir / "test.txt"
+            test_file.write_text("ok", encoding="utf-8")
+            self.assertEqual(test_file.read_text(encoding="utf-8"), "ok")

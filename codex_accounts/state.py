@@ -15,9 +15,11 @@ class AccountError(Exception):
 
 
 def private_directory(path: Path) -> None:
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
     if os.name == "posix":
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
         path.chmod(0o700)
+    else:
+        path.mkdir(parents=True, exist_ok=True)
 
 
 def default_root() -> Path:

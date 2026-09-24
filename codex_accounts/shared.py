@@ -286,7 +286,10 @@ def prepare_home(store: Store, account_home: Path | None = None) -> Path:
         for name in DIRECTORIES:
             private_directory(target / name)
         if not (target / "config.toml").exists():
-            (target / "config.toml").touch(mode=0o600)
+            if os.name == "posix":
+                (target / "config.toml").touch(mode=0o600)
+            else:
+                (target / "config.toml").touch()
         # Import all homes before linking, so new files reach every account at once.
         migrations = []
         for home in sorted(candidates):

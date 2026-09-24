@@ -154,7 +154,7 @@ def add_account(
                 )
             private_directory(homes)
             home = homes / account_id
-            home.mkdir(mode=0o700)
+            private_directory(home)
             prepare_home(store, home)
             print("Sign into the account you want to add.", flush=True)
             arguments = [binary, "login"]
